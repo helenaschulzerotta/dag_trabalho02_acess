@@ -132,6 +132,10 @@ st.sidebar.markdown(f"**Modo A:** {meta['LABEL_A']}")
 st.sidebar.markdown(f"**Modo B:** {meta['LABEL_B']}")
 st.sidebar.markdown(f"**Resolução H3:** {meta.get('H3_RES', '—')}")
 
+limiar_critico = st.sidebar.slider(
+    "Limiar crítico (min) — item 13", 15, 90, int(meta.get("LIMIAR_CRITICO", 45)), step=5
+)
+
 diferencas = calcular_diferencas(resultados_A, resultados_B)
 criticos = calcular_criticos(resultados_A, limiar_critico)
 centro = centro_mapa(resultados_A)
