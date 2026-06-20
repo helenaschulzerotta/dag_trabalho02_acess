@@ -1,0 +1,9 @@
+{
+  "CIDADE": "Curitiba, Paraná, Brazil",
+  "LABEL_A": "Transporte coletivo + Caminhada",
+  "LABEL_B": "Carro",
+  "MAX_MIN": 60,
+  "H3_RES": 8,
+  "DEPARTURE": "10/12/2025 07:30h",
+  "LIMIAR_CRITICO": 45
+}
