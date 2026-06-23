@@ -47,6 +47,10 @@ GITHUB_RAW_BASE = (
     "604b0e4d2765104ccd367b5ed7ffcb4f2aebc5a1"
 )
 
+BAIRROS_URL = (
+    "https://raw.githubusercontent.com/helenaschulzerotta/dag_trabalho02_acess/"
+    "b0429fca1aff4e7769d2944864eb3e729ac296d7/DIVISA_DE_BAIRROS.geojson"
+)
 
 def _get(url: str) -> bytes:
     r = requests.get(url, timeout=30)
@@ -77,6 +81,22 @@ def carregar_dados(base_url: str):
 
     return meta, resultados_A, resultados_B
 
+@st.cache_data(show_spinner="Carregando camada de bairros...")
+def carregar_bairros():
+    try:
+        gdf = gpd.read_file(io.BytesIO(_get(BAIRROS_URL)))
+        # SIRGAS 2000 22S (EPSG:31982) → WGS84 para Folium
+        if gdf.crs is None:
+            gdf = gdf.set_crs("EPSG:31982")
+        gdf = gdf.to_crs("EPSG:4326")
+        return gdf
+    except Exception as e:
+        st.warning(f"Não foi possível carregar a camada de bairros: {e}")
+        return None
+  
+def _cat_tempo(serie: pd.Series) -> pd.Series:
+    """Converte coluna de tempo numérico para categoria de faixa."""
+    return pd.cut(serie, bins=BINS, labels=LABELS_CAT, right=True).astype(str).fillna("sem dados")
 
 def calcular_diferencas(resultados_A, resultados_B):
     """Item 11 — diferença de tempo (Modo A − Modo B) por hexágono."""
@@ -108,6 +128,54 @@ def centro_mapa(resultados_A):
     c = geom.union_all().centroid
     return [c.y, c.x]
 
+def _adicionar_bairros(m: folium.Map, gdf_bairros):
+    """Adiciona camada de divisas de bairros ao mapa Folium."""
+    if gdf_bairros is None:
+        return
+    fg = folium.FeatureGroup(name="Divisas de Bairros", show=True)
+    nome_col = "NOME" if "NOME" in gdf_bairros.columns else None
+    tooltip_fields = [nome_col] if nome_col else []
+    tooltip_aliases = ["Bairro:"] if nome_col else []
+    folium.GeoJson(
+        gdf_bairros.__geo_interface__,
+        style_function=lambda f: {
+            "fillColor": "none",
+            "color": "#333333",
+            "weight": 1.2,
+            "fillOpacity": 0,
+            "dashArray": "4 3",
+        },
+        tooltip=folium.GeoJsonTooltip(
+            fields=tooltip_fields,
+            aliases=tooltip_aliases,
+            sticky=False,
+        ) if tooltip_fields else None,
+    ).add_to(fg)
+    fg.add_to(m)
+ 
+ 
+def _legenda_html(titulo: str = "Tempo de acesso") -> str:
+    """Gera HTML de legenda flutuante para os mapas Folium."""
+    itens = ""
+    for label, cor in COR_CAT.items():
+        itens += (
+            f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+            f'<div style="width:18px;height:14px;background:{cor};'
+            f'border:1px solid #888;border-radius:2px;flex-shrink:0"></div>'
+            f'<span style="font-size:12px">{label}</span></div>'
+        )
+    return (
+        '<div style="'
+        "position:fixed;bottom:30px;right:10px;"
+        "background:rgba(255,255,255,0.92);padding:10px 14px;"
+        "border-radius:6px;border:1px solid #ccc;"
+        "box-shadow:2px 2px 6px rgba(0,0,0,.2);"
+        "z-index:9999;font-family:sans-serif;min-width:130px;"
+        '">'
+        f'<b style="font-size:12px">{titulo}</b><br><br>'
+        f"{itens}"
+        "</div>"
+    )
 
 # ──────────────────────────────────────────────────────────────────────────
 # Sidebar
@@ -116,6 +184,7 @@ st.sidebar.title("🗺️ Acessibilidade Urbana")
 base_url = st.sidebar.text_input("URL base dos dados (GitHub raw)", value=GITHUB_RAW_BASE)
 
 meta, resultados_A, resultados_B = carregar_dados(base_url)
+bairros_gdf = carregar_bairros()
 
 if meta is None:
     st.warning(
@@ -146,8 +215,8 @@ st.caption(
     f"partida {meta.get('DEPARTURE', '—')}"
 )
 
-tab11, tab12, tab13 = st.tabs(
-    ["11 · Comparativo A vs B", "12 · Mapa interativo", "13 · Zonas críticas"]
+tab11, tab12, tab13, tab_sobre = st.tabs(
+    ["11 · Comparativo A vs B", "12 · Mapa interativo", "13 · Zonas críticas", "ℹ️ Sobre"]
 )
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -177,6 +246,39 @@ with tab11:
     )
     df_sel = diferencas[chave_sel]
 
+    # ── Gráficos de barras por faixa de tempo (cores alinhadas com o mapa) ──
+    st.markdown("#### Distribuição por faixa de tempo")
+    c_bar1, c_bar2 = st.columns(2)
+ 
+    for col_bar, modo_col, label_modo in [
+        (c_bar1, "cat_A", meta["LABEL_A"]),
+        (c_bar2, "cat_B", meta["LABEL_B"]),
+    ]:
+        contagem = (
+            df_sel[modo_col]
+            .value_counts()
+            .reindex(LABELS_CAT + ["sem dados"], fill_value=0)
+            .reset_index()
+        )
+        contagem.columns = ["Faixa", "Hexágonos"]
+        contagem = contagem[contagem["Hexágonos"] > 0]
+ 
+        fig_bar = px.bar(
+            contagem,
+            x="Faixa",
+            y="Hexágonos",
+            color="Faixa",
+            color_discrete_map=COR_CAT,
+            title=f"{label_modo} — {NOMES[chave_sel]}",
+            labels={"Faixa": "Faixa de tempo", "Hexágonos": "Nº de hexágonos"},
+            category_orders={"Faixa": LABELS_CAT + ["sem dados"]},
+        )
+        fig_bar.update_layout(showlegend=False)
+        with col_bar:
+            st.plotly_chart(fig_bar, use_container_width=True)
+ 
+    # ── Histograma de diferenças + mapa delta ──
+    st.markdown("#### Diferença A − B por hexágono")
     c1, c2 = st.columns([1, 1])
     with c1:
         fig = px.histogram(
@@ -292,3 +394,68 @@ with tab13:
         fg.add_to(m_crit)
     folium.LayerControl(collapsed=False).add_to(m_crit)
     st_folium(m_crit, height=550, use_container_width=True, key="mapa_criticos")
+
+# ──────────────────────────────────────────────────────────────────────────
+# Sobre
+# ──────────────────────────────────────────────────────────────────────────
+with tab_sobre:
+    st.subheader("Sobre este trabalho")
+ 
+    st.markdown(
+        "Este dashboard é o **Trabalho 02** da disciplina "
+        "**Desenvolvimento de Aplicações Geoespaciais**, ofertada pela "
+        "**Profª. Drª. Silvana Camboim** para o "
+        "**Programa de Pós-Graduação em Planejamento Urbano (PPU)** "
+        "da **Universidade Federal do Paraná (UFPR)**."
+    )
+ 
+    st.markdown("---")
+    st.markdown("### O que é acessibilidade urbana?")
+    st.markdown(
+        "Acessibilidade urbana mede a **facilidade com que pessoas alcançam oportunidades** — "
+        "empregos, serviços de saúde, educação, assistência social — a partir de onde vivem, "
+        "considerando o sistema de transporte e o uso do solo.\n\n"
+        "Na perspectiva do **IPEA (Instituto de Pesquisa Econômica Aplicada)**, acessibilidade "
+        "urbana vai além da simples mobilidade (capacidade de se deslocar): ela indica "
+        "**quantas oportunidades estão disponíveis a uma determinada distância ou tempo de "
+        "viagem**. Métricas de acessibilidade revelam desigualdades territoriais ao mostrar "
+        "que populações em periferias ou com acesso restrito ao transporte coletivo enfrentam "
+        "barreiras estruturais para atingir serviços essenciais, mesmo quando esses serviços "
+        "existem na cidade."
+    )
+ 
+    st.markdown("---")
+    st.markdown("### Dados e metodologia")
+ 
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown(
+            "**Fontes de dados**\n"
+            "- 🗺️ **Malha viária:** OpenStreetMap (OSM), recortada para a área de estudo\n"
+            "- 🏥 **Equipamentos públicos:** OpenStreetMap — unidades de saúde, escolas e "
+            "centros de assistência social\n"
+            "- 🚌 **GTFS (transporte coletivo):** disponibilizado pela "
+            "**Prefeitura Municipal de Curitiba**\n"
+            "- 🏘️ **Divisas de bairros:** Prefeitura Municipal de Curitiba (SIRGAS 2000 22S)"
+        )
+    with col_b:
+        st.markdown(
+            "**Ferramentas e bibliotecas**\n"
+            "- 🐍 **Python:** r5py, geopandas, pandas, H3, Folium, Streamlit, Plotly\n"
+            "- 🔷 **Grade espacial:** hexágonos H3 como unidades de origem\n"
+            "- ⏱️ **Matriz de tempo:** calculada via `r5py.TravelTimeMatrix` para cada modo "
+            "e tipo de equipamento\n"
+            "- 📓 **Notebook de cálculo:** disponível no "
+            "[repositório GitHub](https://github.com/helenaschulzerotta/dag_trabalho02_acess)"
+        )
+ 
+    st.markdown("---")
+    st.info(
+        "O cálculo das matrizes de tempo de viagem é realizado **uma única vez no notebook "
+        "Colab** (`Acessibilidade_Urbana_r5py.ipynb`), e os resultados são exportados como "
+        "GeoJSONs. Este dashboard apenas lê e visualiza esses resultados — não há "
+        "reprocessamento em tempo real.\n\n"
+        "📂 **Repositório:** "
+        "[github.com/helenaschulzerotta/dag_trabalho02_acess]"
+        "(https://github.com/helenaschulzerotta/dag_trabalho02_acess)"
+    )
