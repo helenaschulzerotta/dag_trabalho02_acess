@@ -110,6 +110,8 @@ def calcular_diferencas(resultados_A, resultados_B):
         )
         df = dfA.merge(dfB, on="id", how="left")
         df["delta"] = df["tempo_A"] - df["tempo_B"]
+        df["cat_A"] = _cat_tempo(df["tempo_A"])
+        df["cat_B"] = _cat_tempo(df["tempo_B"])
         diferencas[chave] = df
     return diferencas
 
@@ -119,6 +121,7 @@ def calcular_criticos(resultados_A, limiar):
     criticos = {}
     for chave in NOMES:
         df = resultados_A[chave][["id", "tempo_min", "geometry"]].copy()
+        df["cat"] = _cat_tempo(df["tempo_min"])
         criticos[chave] = df[df["tempo_min"] > limiar].copy()
     return criticos
 
@@ -302,6 +305,8 @@ with tab11:
             line_weight=0.3,
             legend_name=f"Diferença A − B (min) — {NOMES[chave_sel]}",
         ).add_to(m_delta)
+        _adicionar_bairros(m_delta, bairros_gdf)
+        folium.LayerControl(collapsed=False).add_to(m_delta)
         st_folium(m_delta, height=380, use_container_width=True, key="mapa_delta")
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -314,7 +319,7 @@ with tab12:
     )
 
     @st.cache_resource(show_spinner="Montando mapa...")
-    def montar_mapa_completo(_resultados_A, _resultados_B, centro, label_a, label_b):
+    def montar_mapa_completo(_resultados_A, _resultados_B, _bairros, centro, label_a, label_b):
         m = folium.Map(location=centro, zoom_start=11, tiles="CartoDB positron")
 
         def adicionar_camada(resultado_df, nome_camada, mapa):
@@ -335,17 +340,41 @@ with tab12:
                     },
                     tooltip=tip,
                 ).add_to(fg)
-            fg.add_to(mapa)
+            fg.add_to(mapa)for i, (chave, nome) in enumerate(NOMES.items()):
+            for j, (res, label) in enumerate(
+                [(_resultados_A, label_a), (_resultados_B, label_b)]
+            ):
+                fg_name = f"{nome} — {label}"
+                fg = folium.FeatureGroup(name=fg_name, show=(i == 0 and j == 0))
+                for _, row in res[chave].iterrows():
+                    cat = str(row.get("categoria", "sem dados"))
+                    cor = COR_CAT.get(cat, "#cccccc")
+                    tval = row.get("tempo_min")
+                    tip = (
+                        f"<b>{fg_name}</b><br>Tempo: {tval:.0f} min<br>Faixa: {cat}"
+                        if pd.notna(tval)
+                        else f"<b>{fg_name}</b><br>Sem acesso"
+                    )
+                    folium.GeoJson(
+                        row.geometry.__geo_interface__,
+                        style_function=lambda f, c=cor: {
+                            "fillColor": c, "color": "#888", "weight": 0.3, "fillOpacity": 0.7
+                        },
+                        tooltip=tip,
+                    ).add_to(fg)
+                fg.add_to(m)
 
         for chave, nome in NOMES.items():
             adicionar_camada(_resultados_A[chave], f"{nome} — {label_a}", m)
             adicionar_camada(_resultados_B[chave], f"{nome} — {label_b}", m)
 
+        _adicionar_bairros(m, _bairros)
         folium.LayerControl(collapsed=False).add_to(m)
+        m.get_root().html.add_child(folium.Element(_legenda_html("Tempo de acesso")))
         return m
 
     m_completo = montar_mapa_completo(
-        resultados_A, resultados_B, centro, meta["LABEL_A"], meta["LABEL_B"]
+        resultados_A, resultados_B, bairros_gdf, centro, meta["LABEL_A"], meta["LABEL_B"]
     )
     st_folium(m_completo, height=600, use_container_width=True, key="mapa_completo")
 
@@ -375,15 +404,42 @@ with tab13:
     ).unique() if any(len(d) for d in criticos.values()) else []
     st.info(f"**Total geral** — hexágonos críticos em ao menos um serviço: {len(all_critical_ids)}")
 
+    chave_sel13 = st.selectbox(
+        "Tipo de equipamento", list(NOMES.keys()), format_func=lambda k: NOMES[k], key="sel13"
+    )
+    df_crit_sel = criticos[chave_sel13]
+    if len(df_crit_sel) > 0:
+        contagem_crit = (
+            df_crit_sel["cat"]
+            .value_counts()
+            .reindex(LABELS_CAT + ["sem dados"], fill_value=0)
+            .reset_index()
+        )
+        contagem_crit.columns = ["Faixa", "Hexágonos"]
+        contagem_crit = contagem_crit[contagem_crit["Hexágonos"] > 0]
+        fig_crit = px.bar(
+            contagem_crit,
+            x="Faixa", y="Hexágonos",
+            color="Faixa",
+            color_discrete_map=COR_CAT,
+            title=f"Zonas críticas — {NOMES[chave_sel13]} (> {limiar_critico} min)",
+            category_orders={"Faixa": LABELS_CAT + ["sem dados"]},
+        )
+        fig_crit.update_layout(showlegend=False)
+        st.plotly_chart(fig_crit, use_container_width=True)
+  
     m_crit = folium.Map(location=centro, zoom_start=11, tiles="CartoDB positron")
     for chave, df_crit in criticos.items():
         fg = folium.FeatureGroup(
             name=f"{NOMES[chave]} — crítico (> {limiar_critico} min)", show=True
         )
         for _, row in df_crit.iterrows():
-            cat = pd.cut([row["tempo_min"]], bins=BINS, labels=LABELS_CAT, right=True)[0]
-            cor = COR_CAT.get(str(cat), "#cccccc")
-            tip = f"<b>{NOMES[chave]} (crítico)</b><br>Tempo: {row['tempo_min']:.0f} min"
+            cat = str(row.get("cat", "sem dados"))
+            cor = COR_CAT.get(cat, "#cccccc")
+            tip = (
+                f"<b>{NOMES[chave]} (crítico)</b><br>"
+                f"Tempo: {row['tempo_min']:.0f} min<br>Faixa: {cat}"
+            )
             folium.GeoJson(
                 row.geometry.__geo_interface__,
                 style_function=lambda f, c=cor: {
@@ -392,7 +448,9 @@ with tab13:
                 tooltip=tip,
             ).add_to(fg)
         fg.add_to(m_crit)
+    _adicionar_bairros(m_crit, bairros_gdf)
     folium.LayerControl(collapsed=False).add_to(m_crit)
+    m_crit.get_root().html.add_child(folium.Element(_legenda_html("Tempo de acesso")))
     st_folium(m_crit, height=550, use_container_width=True, key="mapa_criticos")
 
 # ──────────────────────────────────────────────────────────────────────────
