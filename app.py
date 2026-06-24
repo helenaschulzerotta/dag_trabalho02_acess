@@ -340,6 +340,7 @@ with tab12:
                     },
                     tooltip=tip,
                 ).add_to(fg)
+            
             fg.add_to(mapa)for i, (chave, nome) in enumerate(NOMES.items()):
             for j, (res, label) in enumerate(
                 [(_resultados_A, label_a), (_resultados_B, label_b)]
