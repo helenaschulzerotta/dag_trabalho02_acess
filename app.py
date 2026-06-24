@@ -322,26 +322,7 @@ with tab12:
     def montar_mapa_completo(_resultados_A, _resultados_B, _bairros, centro, label_a, label_b):
         m = folium.Map(location=centro, zoom_start=11, tiles="CartoDB positron")
 
-        def adicionar_camada(resultado_df, nome_camada, mapa):
-            fg = folium.FeatureGroup(name=nome_camada, show=True)
-            for _, row in resultado_df.iterrows():
-                cat = str(row.get("categoria", "sem dados"))
-                cor = COR_CAT.get(cat, "#cccccc")
-                tval = row.get("tempo_min")
-                tip = (
-                    f"<b>{nome_camada}</b><br>Tempo: {tval:.0f} min<br>Faixa: {cat}"
-                    if pd.notna(tval)
-                    else f"<b>{nome_camada}</b><br>Sem acesso"
-                )
-                folium.GeoJson(
-                    row.geometry.__geo_interface__,
-                    style_function=lambda f, c=cor: {
-                        "fillColor": c, "color": "#888", "weight": 0.3, "fillOpacity": 0.7
-                    },
-                    tooltip=tip,
-                ).add_to(fg)
-            
-            fg.add_to(mapa)for i, (chave, nome) in enumerate(NOMES.items()):
+        for i, (chave, nome) in enumerate(NOMES.items()):
             for j, (res, label) in enumerate(
                 [(_resultados_A, label_a), (_resultados_B, label_b)]
             ):
@@ -364,10 +345,6 @@ with tab12:
                         tooltip=tip,
                     ).add_to(fg)
                 fg.add_to(m)
-
-        for chave, nome in NOMES.items():
-            adicionar_camada(_resultados_A[chave], f"{nome} — {label_a}", m)
-            adicionar_camada(_resultados_B[chave], f"{nome} — {label_b}", m)
 
         _adicionar_bairros(m, _bairros)
         folium.LayerControl(collapsed=False).add_to(m)
