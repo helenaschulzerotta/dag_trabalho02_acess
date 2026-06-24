@@ -280,34 +280,23 @@ with tab11:
         with col_bar:
             st.plotly_chart(fig_bar, use_container_width=True)
  
-    # ── Histograma de diferenças + mapa delta ──
+    # ── Mapa de diferenças A − B ──
     st.markdown("#### Diferença A − B por hexágono")
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        fig = px.histogram(
-            df_sel, x="delta", nbins=30,
-            labels={"delta": "Diferença A − B (min)"},
-            title=f"Distribuição das diferenças — {NOMES[chave_sel]}",
-        )
-        fig.add_vline(x=0, line_dash="dash", line_color="gray")
-        st.plotly_chart(fig, width="stretch")
-
-    with c2:
-        gdf_delta = gpd.GeoDataFrame(df_sel, geometry="geometry", crs="EPSG:4326")
-        m_delta = folium.Map(location=centro, zoom_start=11, tiles="CartoDB positron")
-        folium.Choropleth(
-            geo_data=gdf_delta.__geo_interface__,
-            data=gdf_delta,
-            columns=["id", "delta"],
-            key_on="feature.properties.id",
-            fill_color="RdYlGn_r",
-            fill_opacity=0.75,
-            line_weight=0.3,
-            legend_name=f"Diferença A − B (min) — {NOMES[chave_sel]}",
-        ).add_to(m_delta)
-        _adicionar_bairros(m_delta, bairros_gdf)
-        folium.LayerControl(collapsed=False).add_to(m_delta)
-        st_folium(m_delta, height=380, use_container_width=True, key="mapa_delta")
+    gdf_delta = gpd.GeoDataFrame(df_sel, geometry="geometry", crs="EPSG:4326")
+    m_delta = folium.Map(location=centro, zoom_start=11, tiles="CartoDB positron")
+    folium.Choropleth(
+        geo_data=gdf_delta.__geo_interface__,
+        data=gdf_delta,
+        columns=["id", "delta"],
+        key_on="feature.properties.id",
+        fill_color="RdYlGn_r",
+        fill_opacity=0.75,
+        line_weight=0.3,
+        legend_name=f"Diferença A − B (min) — {NOMES[chave_sel]}",
+    ).add_to(m_delta)
+    _adicionar_bairros(m_delta, bairros_gdf)
+    folium.LayerControl(collapsed=False).add_to(m_delta)
+    st_folium(m_delta, height=450, use_container_width=True, key="mapa_delta")
 
 # ──────────────────────────────────────────────────────────────────────────
 # Item 12 — Mapa interativo
